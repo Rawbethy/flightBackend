@@ -29,10 +29,10 @@ class WebDriverContext:
         if self.driver:
             self.driver.quit()
 
-with open('/home/ec2-user/Flight-Comparison/scraping/Utilities/airportDict.pk1', 'rb') as fp:
+with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
     portDict = pickle.load(fp)
 
-with open('/home/ec2-user/Flight-Comparison/scraping/Utilities/airportDF.pk1', 'rb') as fp:
+with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
     airports = pickle.load(fp)
 
 app = Flask(__name__)
@@ -95,6 +95,12 @@ def airlineAPI():
             for i, c in enumerate(cards):
                 times = []
                 entry = {  # Create a new dictionary for each entry
+                    'ports': {
+                        'depTO': [],
+                        'depL': [],
+                        'retTO': [],
+                        'retL': []
+                    },
                     'depAirline': None,
                     'depTimes': [],
                     'depFlightLen': None,
@@ -115,7 +121,8 @@ def airlineAPI():
                     'price': None
                 }
                 airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                times_container = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
+                timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
+                portsContainer = c.find_all('div', {'class': 'EFvI'})
                 layoverContainer = c.find_all('div', {'class': 'JWEO'})
                 lengthContainer = c.find_all('div', {'class': 'xdW8'})
                 link = c.find('div', {'class': 'dOAU-main-btn-wrap'}).find('a', {'role': 'link'})
@@ -131,10 +138,28 @@ def airlineAPI():
                         entry['depFlightLen'] = currLen.text
                     else:
                         entry['retFlightLen'] = currLen.text
-                for container in times_container:
+
+                for index1, container in enumerate(portsContainer):
+                    divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                    for index2, div in enumerate(divs):
+                        currPortName = div['title']
+                        portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
+                        if index1 == 0:
+                            if index2 == 0:
+                                entry['ports']['depTO'] += [portAbbrev, currPortName]
+                            else:
+                                entry['ports']['depL'] += [portAbbrev, currPortName]
+                        else:
+                            if index2 == 0:
+                                entry['ports']['retTO'] += [portAbbrev, currPortName]
+                            else:
+                                entry['ports']['retL'] += [portAbbrev, currPortName]
+
+                for container in timesContainer:
                     spans = container.find_all('span')
                     for span in spans:
                         times.append(span.text)
+
                 for index, container in enumerate(layoverContainer):
                     portsList = set()
                     lengthList = []
@@ -167,12 +192,15 @@ def airlineAPI():
                     times[2] = times[2][:-2]
                 if times[5][-2] == '+':
                     times[5] = times[2][:-2]
+
                 entry['depAirline'] = airlinesInfo[0].text
                 entry['depTimes'] = [times[0], times[2]]
                 entry['retAirline'] = airlinesInfo[5].text
                 entry['retTimes'] = [times[3], times[5]]
                 entry['price'] = price
                 airlinesAndPrices[f'Entry{i}'] = entry
+                print(entry['ports'])
+
             return jsonify(airlinesAndPrices)    
     except Exception as e:
         # Handle exceptions as needed
