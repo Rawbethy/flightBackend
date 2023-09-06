@@ -199,7 +199,6 @@ def airlineAPI():
                 entry['retTimes'] = [times[3], times[5]]
                 entry['price'] = price
                 airlinesAndPrices[f'Entry{i}'] = entry
-                print(entry['ports'])
 
             return jsonify(airlinesAndPrices)    
     except Exception as e:
