@@ -211,20 +211,30 @@ def airlineAPI():
                         entry['retFlightLen'] = currLen.text
 
                 for index1, container in enumerate(portsContainer):
-                    divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                    for index2, div in enumerate(divs):
-                        currPortName = div['title']
-                        portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
+                    if container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'}):
+                        regDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                        highlightDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'})
                         if index1 == 0:
-                            if index2 == 0:
-                                entry['ports']['depTO'] += [portAbbrev, currPortName]
-                            else:
-                                entry['ports']['depL'] += [portAbbrev, currPortName]
+                            entry['ports']['depTO'] += [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
+                            entry['ports']['depL'] += [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
                         else:
-                            if index2 == 0:
-                                entry['ports']['retTO'] += [portAbbrev, currPortName]
+                            entry['ports']['retTO'] += [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
+                            entry['ports']['retL'] += [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
+                    else:
+                        divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                        for index2, div in enumerate(divs):
+                            currPortName = div['title']
+                            portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
+                            if index1 == 0:
+                                if index2 == 0:
+                                    entry['ports']['depTO'] += [portAbbrev, currPortName]
+                                else:
+                                    entry['ports']['depL'] += [portAbbrev, currPortName]
                             else:
-                                entry['ports']['retL'] += [portAbbrev, currPortName]
+                                if index2 == 0:
+                                    entry['ports']['retTO'] += [portAbbrev, currPortName]
+                                else:
+                                    entry['ports']['retL'] += [portAbbrev, currPortName]
 
                 for container in timesContainer:
                     spans = container.find_all('span')
