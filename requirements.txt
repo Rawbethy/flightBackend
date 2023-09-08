@@ -7,3 +7,4 @@ webdriver_manager
 chromedriver_autoinstaller
 python-dotenv
 psycopg2-binary
+flask_sqlalchemy

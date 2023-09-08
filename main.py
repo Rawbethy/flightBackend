@@ -4,6 +4,7 @@ import psycopg2
 import os
 
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 from bs4 import BeautifulSoup as bs
 from html.parser import HTMLParser
 from selenium import webdriver
@@ -23,218 +24,258 @@ dbUser = os.getenv('dbUser')
 dbName = os.getenv('dbName')
 dbPW = os.getenv('dbPW')
 
-try:
-    conn = psycopg2.connect(
+def createDBConnection():
+    return psycopg2.connect(
         host = dbEndpoint,
         user = dbUser,
         password = dbPW,
         database = dbName
     )
 
-    cursor = conn.cursor(cursor_factory=DictCursor)
-    print('Successfully connected to postgres DB!')
+def insertUser(username, email, password):
+    try:
+        conn = createDBConnection()
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor.execute(
+            "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s);",
+            (username, email, generate_password_hash(password))
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
 
-    def createDriver():
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new')
-        options.add_argument("--disable-cache")
-        return webdriver.Chrome(options=options)
+    except psycopg2.Error as e:
+        print(f'Database Error: {e}')
+        return False
 
-    class WebDriverContext:
-        def __enter__(self):
-            self.driver = createDriver()
-            return self.driver
 
-        def __exit__(self, exc_type, exc_value, traceback):
-            if self.driver:
-                self.driver.quit()
+def createDriver():
+    options = webdriver.ChromeOptions()
+    options.add_argument('--headless=new')
+    options.add_argument("--disable-cache")
+    return webdriver.Chrome(options=options)
 
-    with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
-        portDict = pickle.load(fp)
+class WebDriverContext:
+    def __enter__(self):
+        self.driver = createDriver()
+        return self.driver
 
-    with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
-        airports = pickle.load(fp)
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.driver:
+            self.driver.quit()
 
-    app = Flask(__name__)
-    cors = CORS(app)
+with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
+    portDict = pickle.load(fp)
 
-    @app.route('/airlineCodes', methods=['GET'])
-    @cross_origin()
-    def codeAPI():
-        return portDict
+with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
+    airports = pickle.load(fp)
 
-    @app.route('/dbTest', methods=['GET'])
-    @cross_origin()
-    def test():
-        cursor.execute("SELECT * FROM users WHERE username = 'rob.duque';")
-        result = cursor.fetchone()
-        return result['email']
+app = Flask(__name__)
+cors = CORS(app)
 
-    @app.route('/airlineAPI', methods=['POST'])
-    @cross_origin()
-    def airlineAPI():
-        def createURL(depPort, arrPort, depDate, retDate, numAd):
-            string = 'https://www.kayak.com/flights/'
+@app.route('/airlineCodes', methods=['GET'])
+@cross_origin()
+def codeAPI():
+    return portDict
 
-            if isinstance(depPort, list):
-                for index, port in enumerate(depPort):
-                    string += f'{depPort[index]}'
-                    if index < len(depPort) - 1:
-                        string += ','
-            else:
-                string += f'{depPort}'
+@app.route('/register', methods=['POST'])
+@cross_origin()
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
 
-            string += '-'
+    try:
+        conn = createDBConnection()
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor.execute(f'SELECT COUNT(*) FROM users WHERE username = \'{username}\'')
+        count = cursor.fetchone()[0]
 
-            if isinstance(arrPort, list):
-                for index, port in enumerate(arrPort):
-                    string += f'{arrPort[index]}'
-                    if index < len(arrPort) - 1:
-                        string += ','
-            else:
-                string += f'{arrPort}'
+        if count > 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'message': 'Username already exists!'})
 
-            string += f'/{depDate}/{retDate}/{numAd}adults?sort=bestflight_a'
-            return string
-            
-        # This program will use web scraping techniques to extract data from Kayak.com to search for optimal price matching 
-        # between multiple airline companies and compare the prices
+        if insertUser(username, email, password):
+            cursor.close()
+            conn.close()
+            return jsonify({'message': 'User registered successfully!'}), 200
 
-        data = request.get_json()
-        depDate = data.get('depDate')
-        depPort = data.get('depPort')
-        retDate = data.get('retDate')
-        arrPort = data.get('arrPort')
+        cursor.close()
+        conn.close()
+        return jsonify({'message': 'Failed to register user!'}), 500
 
-        url = createURL(depPort, arrPort, depDate, retDate, 1)
+    except psycopg2.Error as e:
+        print(f'Database Error: {e}')
+        return jsonify({'message': 'Failed to register user!'}), 500
 
-        try:
-            with WebDriverContext() as driver:
-                driver.get(url)
-                print(url)
-                time.sleep(5)
-                page = driver.page_source
-                soup = bs(page, 'html.parser')
-                cards = soup.find_all('div', {'class': 'nrc6-wrapper'})
 
-                airlinesAndPrices = dict()
+    return jsonify({'message': '?'})
 
-                for i, c in enumerate(cards):
-                    times = []
-                    entry = {  # Create a new dictionary for each entry
-                        'ports': {
-                            'depTO': [],
-                            'depL': [],
-                            'retTO': [],
-                            'retL': []
-                        },
-                        'depAirline': None,
-                        'depTimes': [],
-                        'depFlightLen': None,
-                        'retAirline': None,
-                        'retFlightLen': None,
-                        'retTimes': [],
-                        'layoversTo': {
-                            'layoverCount': None,
-                            'layoverPorts': [],
-                            'layoverLengths': []
-                        },
-                        'layoversFrom': {
-                            'layoverCount': None,
-                            'layoverPorts': [],
-                            'layoverLengths': []
-                        },
-                        'link': None,
-                        'price': None
-                    }
-                    airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                    timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
-                    portsContainer = c.find_all('div', {'class': 'EFvI'})
-                    layoverContainer = c.find_all('div', {'class': 'JWEO'})
-                    lengthContainer = c.find_all('div', {'class': 'xdW8'})
-                    link = c.find('div', {'class': 'dOAU-main-btn-wrap'}).find('a', {'role': 'link'})
+@app.route('/airlineAPI', methods=['POST'])
+@cross_origin()
+def airlineAPI():
+    def createURL(depPort, arrPort, depDate, retDate, numAd):
+        string = 'https://www.kayak.com/flights/'
 
-                    if link:
-                        entry['link'] = "kayak.com" + link.get('href')
+        if isinstance(depPort, list):
+            for index, port in enumerate(depPort):
+                string += f'{depPort[index]}'
+                if index < len(depPort) - 1:
+                    string += ','
+        else:
+            string += f'{depPort}'
+
+        string += '-'
+
+        if isinstance(arrPort, list):
+            for index, port in enumerate(arrPort):
+                string += f'{arrPort[index]}'
+                if index < len(arrPort) - 1:
+                    string += ','
+        else:
+            string += f'{arrPort}'
+
+        string += f'/{depDate}/{retDate}/{numAd}adults?sort=bestflight_a'
+        return string
+        
+    # This program will use web scraping techniques to extract data from Kayak.com to search for optimal price matching 
+    # between multiple airline companies and compare the prices
+
+    data = request.get_json()
+    depDate = data.get('depDate')
+    depPort = data.get('depPort')
+    retDate = data.get('retDate')
+    arrPort = data.get('arrPort')
+
+    url = createURL(depPort, arrPort, depDate, retDate, 1)
+
+    try:
+        with WebDriverContext() as driver:
+            driver.get(url)
+            print(url)
+            time.sleep(5)
+            page = driver.page_source
+            soup = bs(page, 'html.parser')
+            cards = soup.find_all('div', {'class': 'nrc6-wrapper'})
+
+            airlinesAndPrices = dict()
+
+            for i, c in enumerate(cards):
+                times = []
+                entry = {  # Create a new dictionary for each entry
+                    'ports': {
+                        'depTO': [],
+                        'depL': [],
+                        'retTO': [],
+                        'retL': []
+                    },
+                    'depAirline': None,
+                    'depTimes': [],
+                    'depFlightLen': None,
+                    'retAirline': None,
+                    'retFlightLen': None,
+                    'retTimes': [],
+                    'layoversTo': {
+                        'layoverCount': None,
+                        'layoverPorts': [],
+                        'layoverLengths': []
+                    },
+                    'layoversFrom': {
+                        'layoverCount': None,
+                        'layoverPorts': [],
+                        'layoverLengths': []
+                    },
+                    'link': None,
+                    'price': None
+                }
+                airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
+                portsContainer = c.find_all('div', {'class': 'EFvI'})
+                layoverContainer = c.find_all('div', {'class': 'JWEO'})
+                lengthContainer = c.find_all('div', {'class': 'xdW8'})
+                link = c.find('div', {'class': 'dOAU-main-btn-wrap'}).find('a', {'role': 'link'})
+
+                if link:
+                    entry['link'] = "kayak.com" + link.get('href')
+                else:
+                    entry['link'] = "No link found"
+
+                for index, container in enumerate(lengthContainer):
+                    currLen = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'})
+                    if index == 0:
+                        entry['depFlightLen'] = currLen.text
                     else:
-                        entry['link'] = "No link found"
+                        entry['retFlightLen'] = currLen.text
 
-                    for index, container in enumerate(lengthContainer):
-                        currLen = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'})
-                        if index == 0:
-                            entry['depFlightLen'] = currLen.text
-                        else:
-                            entry['retFlightLen'] = currLen.text
-
-                    for index1, container in enumerate(portsContainer):
-                        divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                        for index2, div in enumerate(divs):
-                            currPortName = div['title']
-                            portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
-                            if index1 == 0:
-                                if index2 == 0:
-                                    entry['ports']['depTO'] += [portAbbrev, currPortName]
-                                else:
-                                    entry['ports']['depL'] += [portAbbrev, currPortName]
+                for index1, container in enumerate(portsContainer):
+                    divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                    for index2, div in enumerate(divs):
+                        currPortName = div['title']
+                        portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
+                        if index1 == 0:
+                            if index2 == 0:
+                                entry['ports']['depTO'] += [portAbbrev, currPortName]
                             else:
-                                if index2 == 0:
-                                    entry['ports']['retTO'] += [portAbbrev, currPortName]
-                                else:
-                                    entry['ports']['retL'] += [portAbbrev, currPortName]
-
-                    for container in timesContainer:
-                        spans = container.find_all('span')
-                        for span in spans:
-                            times.append(span.text)
-
-                    for index, container in enumerate(layoverContainer):
-                        portsList = set()
-                        lengthList = []
-                        stops = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).find('span')
-                        portsContainer = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                        portSpans = portsContainer.find_all('span')
-                        for spans in portSpans:
-                            for span in spans.find_all('span'):
-                                if span.text not in portsList:
-                                    lengthList.append(span['title'])
-                                    portsList.add(span.text)
-
-                        if index == 0:
-                            entry['layoversTo']['layoverCount'] = stops.text
-                            for i1, span in enumerate(portsList):
-                                splitLength = str(lengthList[i1]).split(' ')
-                                fullLength = splitLength[0] + ' ' + splitLength[1]
-                                entry['layoversTo']['layoverLengths'].append(fullLength)
-                                entry['layoversTo']['layoverPorts'].append(span)
+                                entry['ports']['depL'] += [portAbbrev, currPortName]
                         else:
-                            entry['layoversFrom']['layoverCount'] = stops.text
-                            for i1, span in enumerate(portsList):
-                                splitLength = str(lengthList[i1]).split(' ')
-                                fullLength = splitLength[0] + ' ' + splitLength[1]
-                                entry['layoversFrom']['layoverLengths'].append(fullLength)
-                                entry['layoversFrom']['layoverPorts'].append(span)
-                
-                    price = c.find('div', {'class': 'f8F1-price-text'}).text
-                    if times[2][-2] == '+':
-                        times[2] = times[2][:-2]
-                    if times[5][-2] == '+':
-                        times[5] = times[2][:-2]
+                            if index2 == 0:
+                                entry['ports']['retTO'] += [portAbbrev, currPortName]
+                            else:
+                                entry['ports']['retL'] += [portAbbrev, currPortName]
 
-                    entry['depAirline'] = airlinesInfo[0].text
-                    entry['depTimes'] = [times[0], times[2]]
-                    entry['retAirline'] = airlinesInfo[5].text
-                    entry['retTimes'] = [times[3], times[5]]
-                    entry['price'] = price
-                    airlinesAndPrices[f'Entry{i}'] = entry
+                for container in timesContainer:
+                    spans = container.find_all('span')
+                    for span in spans:
+                        times.append(span.text)
 
-                return jsonify(airlinesAndPrices)    
-        except Exception as e:
-            # Handle exceptions as needed
-            print(f"An exception occurred: {str(e)}")
-            return jsonify({"error": "An error occurred while processing the request"})                     
+                for index, container in enumerate(layoverContainer):
+                    portsList = set()
+                    lengthList = []
+                    stops = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).find('span')
+                    portsContainer = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                    portSpans = portsContainer.find_all('span')
+                    for spans in portSpans:
+                        for span in spans.find_all('span'):
+                            if span.text not in portsList:
+                                lengthList.append(span['title'])
+                                portsList.add(span.text)
 
-    if __name__ == '__main__':
-        app.run('0.0.0.0', port=8080)
+                    if index == 0:
+                        entry['layoversTo']['layoverCount'] = stops.text
+                        for i1, span in enumerate(portsList):
+                            splitLength = str(lengthList[i1]).split(' ')
+                            fullLength = splitLength[0] + ' ' + splitLength[1]
+                            entry['layoversTo']['layoverLengths'].append(fullLength)
+                            entry['layoversTo']['layoverPorts'].append(span)
+                    else:
+                        entry['layoversFrom']['layoverCount'] = stops.text
+                        for i1, span in enumerate(portsList):
+                            splitLength = str(lengthList[i1]).split(' ')
+                            fullLength = splitLength[0] + ' ' + splitLength[1]
+                            entry['layoversFrom']['layoverLengths'].append(fullLength)
+                            entry['layoversFrom']['layoverPorts'].append(span)
+            
+                price = c.find('div', {'class': 'f8F1-price-text'}).text
+                if times[2][-2] == '+':
+                    times[2] = times[2][:-2]
+                if times[5][-2] == '+':
+                    times[5] = times[2][:-2]
 
-except psycopg2.Error as e:
-    print('Error connecting to database: ', e)
+                entry['depAirline'] = airlinesInfo[0].text
+                entry['depTimes'] = [times[0], times[2]]
+                entry['retAirline'] = airlinesInfo[5].text
+                entry['retTimes'] = [times[3], times[5]]
+                entry['price'] = price
+                airlinesAndPrices[f'Entry{i}'] = entry
+
+            return jsonify(airlinesAndPrices)    
+    except Exception as e:
+        # Handle exceptions as needed
+        print(f"An exception occurred: {str(e)}")
+        return jsonify({"error": "An error occurred while processing the request"})                     
+
+if __name__ == '__main__':
+    app.run('0.0.0.0', port=8080)
