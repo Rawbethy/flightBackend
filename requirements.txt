@@ -5,3 +5,5 @@ selenium
 bs4
 webdriver_manager
 chromedriver_autoinstaller
+python-dotenv
+psycopg2-binary
