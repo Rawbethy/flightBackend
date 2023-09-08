@@ -74,6 +74,11 @@ with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
 app = Flask(__name__)
 cors = CORS(app)
 
+@app.route('/')
+@cross_origin()
+def root():
+    return ''
+
 @app.route('/airlineCodes', methods=['GET'])
 @cross_origin()
 def codeAPI():
