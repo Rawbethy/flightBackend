@@ -194,7 +194,7 @@ def airlineAPI():
             time.sleep(5)
             page = driver.page_source
             soup = bs(page, 'html.parser')
-            cards = soup.find_all('div', {'class': 'nrc6-wrapper'})
+            cards = soup.find_all('div', {'class': 'nrc6'})
 
             airlinesAndPrices = dict()
 
@@ -224,8 +224,10 @@ def airlineAPI():
                         'layoverLengths': []
                     },
                     'link': None,
+                    'resultID': None,
                     'price': None
                 }
+                entry['resultID'] = c['data-resultid']
                 airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
                 timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
                 portsContainer = c.find_all('div', {'class': 'EFvI'})
