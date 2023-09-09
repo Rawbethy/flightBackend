@@ -101,23 +101,53 @@ def register():
         if count > 0:
             cursor.close()
             conn.close()
-            return jsonify({'message': 'Username already exists!'})
+            return jsonify({'status': False, 'message': 'Username already exists!'})
 
         if insertUser(username, email, password):
             cursor.close()
             conn.close()
-            return jsonify({'message': 'User registered successfully!'}), 200
+            return jsonify({'status': True, 'message': 'User registered successfully!'}), 200
 
         cursor.close()
         conn.close()
-        return jsonify({'message': 'Failed to register user!'}), 500
+        return jsonify({'status': False, 'message': 'Failed to register user!'}), 500
 
     except psycopg2.Error as e:
         print(f'Database Error: {e}')
-        return jsonify({'message': 'Failed to register user!'}), 500
+        return jsonify({'status': False, 'message': 'Failed to register user!'}), 500
 
 
-    return jsonify({'message': '?'})
+@app.route('/login', methods=['POST'])
+@cross_origin()
+def login():
+    data = request.get_json()
+    username = data['username']
+    password = data['password']
+    try:
+        conn = createDBConnection()
+        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor.execute(f'SELECT * FROM users WHERE username = \'{username}\'')
+        row = cursor.fetchone()
+
+        if not row:
+            cursor.close()
+            conn.close()
+            return jsonify({'message': 'Login credentials do not match! Please try again :)'})
+
+        if(check_password_hash(row['password_hash'], password)):
+            cursor.close()
+            conn.close()
+            return jsonify({'message': 'Logged in successfully!', 'status': True})
+
+
+        cursor.close()
+        conn.close()
+        return jsonify({'message': 'User not found!', 'status': False})
+
+    except psycopg2.Error as e:
+        cursor.close()
+        conn.close()
+        return jsonify({'message': f'Error with DB: {e}', 'status': False})
 
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
