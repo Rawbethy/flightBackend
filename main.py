@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup as bs
 from html.parser import HTMLParser
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from flask import Flask, jsonify, request
@@ -152,6 +151,28 @@ def login():
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
 def airlineAPI():
+    def addLinkToUser(username, url):
+        try:
+            conn = createDBConnection()
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute(f'SELECT * FROM history WHERE user_username = \'{username}\' AND link_url = \'{url}\';')
+            if not cursor.fetchone():
+                cursor.execute(f'INSERT INTO history (link_url, user_username, timestamp) VALUES(\'{url}\', \'{username}\', CURRENT_TIMESTAMP)')
+                conn.commit()
+                print('Link inserted successfully!')
+                cursor.close()
+                conn.close()
+                return
+            print('User already has link present in DB')
+            cursor.close()
+            conn.close()
+            return
+
+        except psycopg2.Error as e:
+            cursor.close()
+            conn.close()
+            print(e)
+        
     def createURL(depPort, arrPort, depDate, retDate, numAd):
         string = 'https://www.kayak.com/flights/'
 
@@ -186,12 +207,16 @@ def airlineAPI():
     arrPort = data.get('arrPort')
 
     url = createURL(depPort, arrPort, depDate, retDate, 1)
+    username = data.get('username') if data.get('username') else None
+    if username:
+        addLinkToUser(username, url)
 
     try:
         with WebDriverContext() as driver:
             driver.get(url)
             print(url)
-            time.sleep(5)
+            loadedPage = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'cdyN')))
+            time.sleep(2)
             page = driver.page_source
             soup = bs(page, 'html.parser')
             cards = soup.find_all('div', {'class': 'nrc6'})
@@ -251,12 +276,22 @@ def airlineAPI():
                     if container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'}):
                         regDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
                         highlightDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'})
-                        if index1 == 0:
-                            entry['ports']['depTO'] += [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
-                            entry['ports']['depL'] += [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
+                        regDivPortInfo = [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
+                        highDivPortInfo = [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
+                        if highDivPortInfo[0] in depPort:
+                            if index1 == 0:
+                                entry['ports']['depTO'] += highDivPortInfo
+                                entry['ports']['depL'] += regDivPortInfo
+                            else:
+                                entry['ports']['retTO'] += regDivPortInfo
+                                entry['ports']['retL'] += highDivPortInfo                    
                         else:
-                            entry['ports']['retTO'] += [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
-                            entry['ports']['retL'] += [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
+                            if index1 == 0:
+                                entry['ports']['depTO'] += regDivPortInfo
+                                entry['ports']['depL'] += highDivPortInfo
+                            else:
+                                entry['ports']['retTO'] += highDivPortInfo
+                                entry['ports']['retL'] += regDivPortInfo 
                     else:
                         divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
                         for index2, div in enumerate(divs):
