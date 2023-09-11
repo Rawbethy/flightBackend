@@ -8,6 +8,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from bs4 import BeautifulSoup as bs
 from html.parser import HTMLParser
 from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -53,7 +54,8 @@ def createDriver():
     options = webdriver.ChromeOptions()
     options.add_argument('--headless=new')
     options.add_argument("--disable-cache")
-    return webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options)
+    return driver
 
 class WebDriverContext:
     def __enter__(self):
@@ -64,10 +66,10 @@ class WebDriverContext:
         if self.driver:
             self.driver.quit()
 
-with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
+with open('./Utilities/airportDict.pk1', 'rb') as fp:
     portDict = pickle.load(fp)
 
-with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
+with open('./Utilities/airportDF.pk1', 'rb') as fp:
     airports = pickle.load(fp)
 
 app = Flask(__name__)
@@ -215,8 +217,7 @@ def airlineAPI():
         with WebDriverContext() as driver:
             driver.get(url)
             print(url)
-            loadedPage = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, 'cdyN')))
-            time.sleep(2)
+            loadedPage = WebDriverWait(driver, 30).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
             page = driver.page_source
             soup = bs(page, 'html.parser')
             cards = soup.find_all('div', {'class': 'nrc6'})
