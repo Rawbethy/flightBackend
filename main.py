@@ -1,12 +1,10 @@
 import time, pickle
-import pandas as pd
 import psycopg2
 import os
 
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from bs4 import BeautifulSoup as bs
-from html.parser import HTMLParser
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
@@ -41,13 +39,17 @@ def insertUser(username, email, password):
             (username, email, generate_password_hash(password))
         )
         conn.commit()
-        cursor.close()
-        conn.close()
         return True
 
     except psycopg2.Error as e:
         print(f'Database Error: {e}')
         return False
+    
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def createDriver():
@@ -66,10 +68,12 @@ class WebDriverContext:
         if self.driver:
             self.driver.quit()
 
-with open('./Utilities/airportDict.pk1', 'rb') as fp:
+with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
+# with open('./Utilities/airportDict.pk1', 'rb') as fp:
     portDict = pickle.load(fp)
 
-with open('./Utilities/airportDF.pk1', 'rb') as fp:
+with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
+# with open('./Utilities/airportDF.pk1', 'rb') as fp:
     airports = pickle.load(fp)
 
 app = Flask(__name__)
@@ -100,22 +104,22 @@ def register():
         count = cursor.fetchone()[0]
 
         if count > 0:
-            cursor.close()
-            conn.close()
             return jsonify({'status': False, 'message': 'Username already exists!'})
 
         if insertUser(username, email, password):
-            cursor.close()
-            conn.close()
             return jsonify({'status': True, 'message': 'User registered successfully!'}), 200
 
-        cursor.close()
-        conn.close()
         return jsonify({'status': False, 'message': 'Failed to register user!'}), 500
 
     except psycopg2.Error as e:
         print(f'Database Error: {e}')
         return jsonify({'status': False, 'message': 'Failed to register user!'}), 500
+    
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 @app.route('/login', methods=['POST'])
@@ -131,28 +135,46 @@ def login():
         row = cursor.fetchone()
 
         if not row:
-            cursor.close()
-            conn.close()
             return jsonify({'message': 'Login credentials do not match! Please try again :)'})
 
         if(check_password_hash(row['password_hash'], password)):
-            cursor.close()
-            conn.close()
             return jsonify({'message': 'Logged in successfully!', 'status': True})
 
-
-        cursor.close()
-        conn.close()
         return jsonify({'message': 'User not found!', 'status': False})
 
     except psycopg2.Error as e:
-        cursor.close()
-        conn.close()
         return jsonify({'message': f'Error with DB: {e}', 'status': False})
+    
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
 def airlineAPI():
+    def addLinkData(username, dataIDs, url):
+        try:
+            conn = createDBConnection()
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            if username:
+                for data_id, price in dataIDs.items():
+                    cursor.execute('SELECT COUNT(*) FROM flightprices WHERE data_id = %s;', (data_id,))
+                    if cursor.fetchone()[0] == 0:
+                        cursor.execute(
+                            'INSERT INTO flightprices (data_id, price, url) VALUES (%s, %s, %s);',
+                            (data_id, int(price), url)
+                        )
+            conn.commit()
+        except psycopg2.Error as e:
+            print('ERROR: %s', (e)) 
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
     def addLinkToUser(username, url):
         try:
             conn = createDBConnection()
@@ -162,18 +184,19 @@ def airlineAPI():
                 cursor.execute(f'INSERT INTO history (link_url, user_username, timestamp) VALUES(\'{url}\', \'{username}\', CURRENT_TIMESTAMP)')
                 conn.commit()
                 print('Link inserted successfully!')
-                cursor.close()
-                conn.close()
                 return
             print('User already has link present in DB')
-            cursor.close()
-            conn.close()
             return
 
         except psycopg2.Error as e:
-            cursor.close()
-            conn.close()
-            print(e)
+            print('ERROR: %s', (e,))
+            return
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
         
     def createURL(depPort, arrPort, depDate, retDate, numAd):
         string = 'https://www.kayak.com/flights/'
@@ -214,6 +237,7 @@ def airlineAPI():
         addLinkToUser(username, url)
 
     try:
+        currData = {}
         with WebDriverContext() as driver:
             driver.get(url)
             print(url)
@@ -353,7 +377,9 @@ def airlineAPI():
                 entry['retTimes'] = [times[3], times[5]]
                 entry['price'] = price
                 airlinesAndPrices[f'Entry{i}'] = entry
-
+                currData[entry['resultID']] = int(entry['price'][1:].replace(',', ''))
+            
+            addLinkData(username, currData, url)
             return jsonify(airlinesAndPrices)    
     except Exception as e:
         # Handle exceptions as needed
