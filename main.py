@@ -2,6 +2,7 @@ import time, pickle
 import psycopg2
 import os
 
+from datetime import datetime
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
 from bs4 import BeautifulSoup as bs
@@ -154,14 +155,30 @@ def login():
 @app.route('/getHistory', methods=['POST'])
 @cross_origin()
 def getHistory():
-    def getURLS(username):
+    def getData(username):
         try:
+            entries = {}
             conn = createDBConnection()
             cursor = conn.cursor(cursor_factory=DictCursor)
-            cursor.execute('SELECT link_url FROM history WHERE user_username = %s;', (username, ))
-            links = cursor.fetchall()
-            linkList = [link[0] for link in links]
-            return linkList
+            cursor.execute('SELECT * FROM history WHERE username = %s;', (username, ))
+            data = cursor.fetchall()
+            for index, entry in enumerate(data):
+                currEntry = {
+                    'urlID': '',
+                    'url': '',
+                    'depCity': '',
+                    'arrCity': '',
+                    'depDate': '',
+                    'retDate': ''
+                }
+                currEntry['urlID'] = entry['url_id']
+                currEntry['url'] = entry['url']
+                currEntry['depCity'] = entry['dep_city']
+                currEntry['arrCity'] = entry['arr_city']
+                currEntry['depDate'] = entry['dep_date']
+                currEntry['retDate'] = entry['ret_date']
+                entries["entry%s"%index] = currEntry
+            return entries
 
         except psycopg2.Error as e:
             print('ERROR: %s', (e,))
@@ -174,11 +191,45 @@ def getHistory():
 
     data = request.get_json()
     username = data.get('username')
-    urls = getURLS(username)
-    # for url in urls:
-    #     print(f'URL: {url[0]}\n')
-    return jsonify({'urls': urls}), 200
+    data = getData(username)
+
+    return jsonify({'entries': data}), 200
+
+@app.route('/getPrices', methods=['POST'])
+@cross_origin()
+def getPrices():
+    def getData(urlID):
+        try:
+            conn = createDBConnection()
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute('SELECT url FROM history WHERE url_id = %s;', (urlID, ))
+            url = cursor.fetchone()[0]
+            cursor.execute('SELECT * FROM flightprices WHERE url = %s;', (url, ))
+            res = cursor.fetchall()
+            entries = {}
+            for index, entry in enumerate(res):
+                currEntry = {
+                    'dataID': '',
+                    'price': ''
+                }
+                currEntry['dataID'] = entry['data_id']
+                currEntry['price'] = entry['price']
+                entries['entry%s'%index] = currEntry
+            return entries
+
+        except psycopg2.Error as e:
+            print(e)
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
         
+    data = request.get_json()
+    urlID = data.get('urlID')
+    res = getData(urlID)
+    return jsonify(res)     
 
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
@@ -189,11 +240,16 @@ def airlineAPI():
             cursor = conn.cursor(cursor_factory=DictCursor)
             if username:
                 for data_id, price in dataIDs.items():
-                    cursor.execute('SELECT COUNT(*) FROM flightprices WHERE data_id = %s;', (data_id,))
+                    if "-sponsored" in data_id:
+                        id = data_id.replace('-sponsored', '').strip()
+                    else:
+                        id = data_id
+
+                    cursor.execute('SELECT COUNT(*) FROM flightprices WHERE data_id = %s;', (id,))
                     if cursor.fetchone()[0] == 0:
                         cursor.execute(
                             'INSERT INTO flightprices (data_id, price, url) VALUES (%s, %s, %s);',
-                            (data_id, int(price), url)
+                            (id, int(price), url)
                         )
             conn.commit()
         except psycopg2.Error as e:
@@ -204,13 +260,13 @@ def airlineAPI():
             if conn:
                 conn.close()
 
-    def addLinkToUser(username, url):
+    def addLinkToUser(username, depDate, retDate, depCity, arrCity, url):
         try:
             conn = createDBConnection()
             cursor = conn.cursor(cursor_factory=DictCursor)
-            cursor.execute(f'SELECT * FROM history WHERE user_username = \'{username}\' AND link_url = \'{url}\';')
+            cursor.execute(f'SELECT * FROM history WHERE username = \'{username}\' AND url = \'{url}\';')
             if not cursor.fetchone():
-                cursor.execute(f'INSERT INTO history (link_url, user_username, timestamp) VALUES(\'{url}\', \'{username}\', CURRENT_TIMESTAMP)')
+                cursor.execute('INSERT INTO history (url, username, timestamp, dep_city, arr_city, dep_date, ret_date) VALUES(%s, %s, %s, %s, %s, %s, %s);', (url, username, datetime.today().date().strftime('%Y-%m-%d'), depCity, arrCity, depDate, retDate))
                 conn.commit()
                 print('Link inserted successfully!')
                 return
@@ -256,163 +312,169 @@ def airlineAPI():
 
     data = request.get_json()
     depDate = data.get('depDate')
+    depCity = data.get('depCity')
     depPort = data.get('depPort')
-    retDate = data.get('retDate')
     arrPort = data.get('arrPort')
+    arrCity = data.get('arrCity')
+    retDate = data.get('retDate')
 
     url = createURL(depPort, arrPort, depDate, retDate, 1)
-    username = data.get('username') if data.get('username') else None
-    if username:
-        addLinkToUser(username, url)
 
     try:
         currData = {}
         with WebDriverContext() as driver:
             driver.get(url)
-            print(url)
             loadedPage = WebDriverWait(driver, 30).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
             page = driver.page_source
             soup = bs(page, 'html.parser')
             cards = soup.find_all('div', {'class': 'nrc6'})
 
-            airlinesAndPrices = dict()
+            if len(cards) == 0:
+                return jsonify({'message': 'No data for chosen dates!'})
+            
+            else:
+                username = data.get('username') if data.get('username') else None
+                if username:
+                    addLinkToUser(username, depDate, retDate, depCity, arrCity, url)
 
-            for i, c in enumerate(cards):
-                times = []
-                entry = {  # Create a new dictionary for each entry
-                    'ports': {
-                        'depTO': [],
-                        'depL': [],
-                        'retTO': [],
-                        'retL': []
-                    },
-                    'depAirline': None,
-                    'depTimes': [],
-                    'depFlightLen': None,
-                    'retAirline': None,
-                    'retFlightLen': None,
-                    'retTimes': [],
-                    'layoversTo': {
-                        'layoverCount': None,
-                        'layoverPorts': [],
-                        'layoverLengths': []
-                    },
-                    'layoversFrom': {
-                        'layoverCount': None,
-                        'layoverPorts': [],
-                        'layoverLengths': []
-                    },
-                    'link': None,
-                    'resultID': None,
-                    'price': None
-                }
-                entry['resultID'] = c['data-resultid']
-                airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
-                portsContainer = c.find_all('div', {'class': 'EFvI'})
-                layoverContainer = c.find_all('div', {'class': 'JWEO'})
-                lengthContainer = c.find_all('div', {'class': 'xdW8'})
-                link = c.find('div', {'class': 'dOAU-main-btn-wrap'}).find('a', {'role': 'link'})
+                airlinesAndPrices = dict()
 
-                if link:
-                    entry['link'] = "kayak.com" + link.get('href')
-                else:
-                    entry['link'] = "No link found"
+                for i, c in enumerate(cards):
+                    times = []
+                    entry = {  # Create a new dictionary for each entry
+                        'ports': {
+                            'depTO': [],
+                            'depL': [],
+                            'retTO': [],
+                            'retL': []
+                        },
+                        'depAirline': None,
+                        'depTimes': [],
+                        'depFlightLen': None,
+                        'retAirline': None,
+                        'retFlightLen': None,
+                        'retTimes': [],
+                        'layoversTo': {
+                            'layoverCount': None,
+                            'layoverPorts': [],
+                            'layoverLengths': []
+                        },
+                        'layoversFrom': {
+                            'layoverCount': None,
+                            'layoverPorts': [],
+                            'layoverLengths': []
+                        },
+                        'link': None,
+                        'resultID': None,
+                        'price': None
+                    }
+                    entry['resultID'] = c['data-resultid']
+                    airlinesInfo = c.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                    timesContainer = c.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
+                    portsContainer = c.find_all('div', {'class': 'EFvI'})
+                    layoverContainer = c.find_all('div', {'class': 'JWEO'})
+                    lengthContainer = c.find_all('div', {'class': 'xdW8'})
+                    link = c.find('div', {'class': 'dOAU-main-btn-wrap'}).find('a', {'role': 'link'})
 
-                for index, container in enumerate(lengthContainer):
-                    currLen = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'})
-                    if index == 0:
-                        entry['depFlightLen'] = currLen.text
+                    if link:
+                        entry['link'] = "kayak.com" + link.get('href')
                     else:
-                        entry['retFlightLen'] = currLen.text
+                        entry['link'] = "No link found"
 
-                for index1, container in enumerate(portsContainer):
-                    if container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'}):
-                        regDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                        highlightDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'})
-                        regDivPortInfo = [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
-                        highDivPortInfo = [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
-                        if highDivPortInfo[0] in depPort:
-                            if index1 == 0:
-                                entry['ports']['depTO'] += highDivPortInfo
-                                entry['ports']['depL'] += regDivPortInfo
-                            else:
-                                entry['ports']['retTO'] += regDivPortInfo
-                                entry['ports']['retL'] += highDivPortInfo                    
+                    for index, container in enumerate(lengthContainer):
+                        currLen = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'})
+                        if index == 0:
+                            entry['depFlightLen'] = currLen.text
                         else:
-                            if index1 == 0:
-                                entry['ports']['depTO'] += regDivPortInfo
-                                entry['ports']['depL'] += highDivPortInfo
-                            else:
-                                entry['ports']['retTO'] += highDivPortInfo
-                                entry['ports']['retL'] += regDivPortInfo 
-                    else:
-                        divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                        for index2, div in enumerate(divs):
-                            currPortName = div['title']
-                            portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
-                            if index1 == 0:
-                                if index2 == 0:
-                                    entry['ports']['depTO'] += [portAbbrev, currPortName]
+                            entry['retFlightLen'] = currLen.text
+
+                    for index1, container in enumerate(portsContainer):
+                        if container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'}):
+                            regDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                            highlightDiv = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default c_cgF-badge-content'})
+                            regDivPortInfo = [regDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, regDiv['title']]
+                            highDivPortInfo = [highlightDiv.find('span', {'class': 'EFvI-ap-info'}).find('span').text, highlightDiv['title']]
+                            if highDivPortInfo[0] in depPort:
+                                if index1 == 0:
+                                    entry['ports']['depTO'] += highDivPortInfo
+                                    entry['ports']['depL'] += regDivPortInfo
                                 else:
-                                    entry['ports']['depL'] += [portAbbrev, currPortName]
+                                    entry['ports']['retTO'] += regDivPortInfo
+                                    entry['ports']['retL'] += highDivPortInfo                    
                             else:
-                                if index2 == 0:
-                                    entry['ports']['retTO'] += [portAbbrev, currPortName]
+                                if index1 == 0:
+                                    entry['ports']['depTO'] += regDivPortInfo
+                                    entry['ports']['depL'] += highDivPortInfo
                                 else:
-                                    entry['ports']['retL'] += [portAbbrev, currPortName]
+                                    entry['ports']['retTO'] += highDivPortInfo
+                                    entry['ports']['retL'] += regDivPortInfo 
+                        else:
+                            divs = container.find_all('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                            for index2, div in enumerate(divs):
+                                currPortName = div['title']
+                                portAbbrev = div.find('span', {'class': 'EFvI-ap-info'}).find('span').text
+                                if index1 == 0:
+                                    if index2 == 0:
+                                        entry['ports']['depTO'] += [portAbbrev, currPortName]
+                                    else:
+                                        entry['ports']['depL'] += [portAbbrev, currPortName]
+                                else:
+                                    if index2 == 0:
+                                        entry['ports']['retTO'] += [portAbbrev, currPortName]
+                                    else:
+                                        entry['ports']['retL'] += [portAbbrev, currPortName]
 
-                for container in timesContainer:
-                    spans = container.find_all('span')
-                    for span in spans:
-                        times.append(span.text)
+                    for container in timesContainer:
+                        spans = container.find_all('span')
+                        for span in spans:
+                            times.append(span.text)
 
-                for index, container in enumerate(layoverContainer):
-                    portsList = set()
-                    lengthList = []
-                    stops = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).find('span')
-                    portsContainer = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
-                    portSpans = portsContainer.find_all('span')
-                    for spans in portSpans:
-                        for span in spans.find_all('span'):
-                            if span.text not in portsList:
-                                lengthList.append(span['title'])
-                                portsList.add(span.text)
+                    for index, container in enumerate(layoverContainer):
+                        portsList = set()
+                        lengthList = []
+                        stops = container.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).find('span')
+                        portsContainer = container.find('div', {'class': 'c_cgF c_cgF-mod-variant-default'})
+                        portSpans = portsContainer.find_all('span')
+                        for spans in portSpans:
+                            for span in spans.find_all('span'):
+                                if span.text not in portsList:
+                                    lengthList.append(span['title'])
+                                    portsList.add(span.text)
 
-                    if index == 0:
-                        entry['layoversTo']['layoverCount'] = stops.text
-                        for i1, span in enumerate(portsList):
-                            splitLength = str(lengthList[i1]).split(' ')
-                            fullLength = splitLength[0] + ' ' + splitLength[1]
-                            entry['layoversTo']['layoverLengths'].append(fullLength)
-                            entry['layoversTo']['layoverPorts'].append(span)
-                    else:
-                        entry['layoversFrom']['layoverCount'] = stops.text
-                        for i1, span in enumerate(portsList):
-                            splitLength = str(lengthList[i1]).split(' ')
-                            fullLength = splitLength[0] + ' ' + splitLength[1]
-                            entry['layoversFrom']['layoverLengths'].append(fullLength)
-                            entry['layoversFrom']['layoverPorts'].append(span)
-            
-                price = c.find('div', {'class': 'f8F1-price-text'}).text
-                if times[2][-2] == '+':
-                    times[2] = times[2][:-2]
-                if times[5][-2] == '+':
-                    times[5] = times[2][:-2]
+                        if index == 0:
+                            entry['layoversTo']['layoverCount'] = stops.text
+                            for i1, span in enumerate(portsList):
+                                splitLength = str(lengthList[i1]).split(' ')
+                                fullLength = splitLength[0] + ' ' + splitLength[1]
+                                entry['layoversTo']['layoverLengths'].append(fullLength)
+                                entry['layoversTo']['layoverPorts'].append(span)
+                        else:
+                            entry['layoversFrom']['layoverCount'] = stops.text
+                            for i1, span in enumerate(portsList):
+                                splitLength = str(lengthList[i1]).split(' ')
+                                fullLength = splitLength[0] + ' ' + splitLength[1]
+                                entry['layoversFrom']['layoverLengths'].append(fullLength)
+                                entry['layoversFrom']['layoverPorts'].append(span)
+                
+                    price = c.find('div', {'class': 'f8F1-price-text'}).text
+                    if times[2][-2] == '+':
+                        times[2] = times[2][:-2]
+                    if times[5][-2] == '+':
+                        times[5] = times[2][:-2]
 
-                entry['depAirline'] = airlinesInfo[0].text
-                entry['depTimes'] = [times[0], times[2]]
-                entry['retAirline'] = airlinesInfo[5].text
-                entry['retTimes'] = [times[3], times[5]]
-                entry['price'] = price
-                airlinesAndPrices[f'Entry{i}'] = entry
-                currData[entry['resultID']] = int(entry['price'][1:].replace(',', ''))
-            
-            addLinkData(username, currData, url)
-            return jsonify(airlinesAndPrices)    
+                    entry['depAirline'] = airlinesInfo[0].text
+                    entry['depTimes'] = [times[0], times[2]]
+                    entry['retAirline'] = airlinesInfo[5].text
+                    entry['retTimes'] = [times[3], times[5]]
+                    entry['price'] = price
+                    airlinesAndPrices[f'Entry{i}'] = entry
+                    currData[entry['resultID']] = int(entry['price'][1:].replace(',', ''))
+                
+                addLinkData(username, currData, url)
+                return jsonify(airlinesAndPrices)
+                
     except Exception as e:
-        # Handle exceptions as needed
-        print(f"An exception occurred: {str(e)}")
+        print("An exception occurred: %s" % e)
         return jsonify({"error": "An error occurred while processing the request"})                     
 
 if __name__ == '__main__':
