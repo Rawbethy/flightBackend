@@ -151,6 +151,35 @@ def login():
         if conn:
             conn.close()
 
+@app.route('/getHistory', methods=['POST'])
+@cross_origin()
+def getHistory():
+    def getURLS(username):
+        try:
+            conn = createDBConnection()
+            cursor = conn.cursor(cursor_factory=DictCursor)
+            cursor.execute('SELECT link_url FROM history WHERE user_username = %s;', (username, ))
+            links = cursor.fetchall()
+            linkList = [link[0] for link in links]
+            return linkList
+
+        except psycopg2.Error as e:
+            print('ERROR: %s', (e,))
+
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+    data = request.get_json()
+    username = data.get('username')
+    urls = getURLS(username)
+    # for url in urls:
+    #     print(f'URL: {url[0]}\n')
+    return jsonify({'urls': urls}), 200
+        
+
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
 def airlineAPI():
