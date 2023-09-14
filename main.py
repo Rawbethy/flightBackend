@@ -52,6 +52,12 @@ def insertUser(username, email, password):
         if conn:
             conn.close()
 
+def cleanSponsorString(dataID):
+    if '-sponsored' in dataID:
+        return dataID.replace('-sponsored', '').strip()
+    else:
+        return dataID
+
 
 def createDriver():
     options = webdriver.ChromeOptions()
@@ -209,13 +215,13 @@ def getPrices():
             entries = {}
             for index, entry in enumerate(res):
                 currEntry = {
-                    'dataID': '',
                     'price': ''
                 }
-                currEntry['dataID'] = entry['data_id']
                 currEntry['price'] = entry['price']
-                entries['entry%s'%index] = currEntry
-            return entries
+                entries[entry['data_id']] = currEntry
+
+            return entries, url
+
 
         except psycopg2.Error as e:
             print(e)
@@ -226,10 +232,72 @@ def getPrices():
             if conn:
                 conn.close()
         
+    def scrapePrices(entries, url):
+        try:    
+            with WebDriverContext() as driver:
+                driver.get(url)
+                loadedPage = WebDriverWait(driver, 30).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
+                page = driver.page_source
+                soup = bs(page, 'html.parser')
+                cards = soup.find_all('div', {'class': 'nrc6'})
+                newPrices = {}
+
+                for index, container in enumerate(cards):
+                    times = []
+                    entry = {
+                        'price': None,
+                        'depTimes': [],
+                        'depFlightLen': None,
+                        'depLayovers': None,
+                        'retTimes': [],
+                        'retFlightLen': None,
+                        'retLayovers': None
+                    }
+                    dataID = cleanSponsorString(container['data-resultid'])
+                    timesContainer = container.find_all('div', {'class': 'vmXl vmXl-mod-variant-large'})
+                    layoverContainer = container.find_all('div', {'class': 'JWEO'})
+                    lengthContainer = container.find_all('div', {'class': 'xdW8'})
+
+                    for i, c in enumerate(timesContainer):
+                        spans = c.find_all('span')
+                        for span in spans:
+                            times.append(span.text)
+
+                    for i, c in enumerate(layoverContainer):
+                        stops = c.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).find('span').text
+                        if i == 0:
+                            entry['depLayovers'] = stops
+                        else:
+                            entry['retLayovers'] = stops
+                    
+                    for i, c in enumerate(lengthContainer):
+                        currLen = c.find('div', {'class': 'vmXl vmXl-mod-variant-default'}).text
+                        if i == 0:
+                            entry['depFlightLen'] = currLen
+                        else:
+                            entry['retFlightLen'] = currLen
+                    
+                    if times[2][-2] == '+':
+                        times[2] = times[2][:-2]
+                    if times[5][-2] == '+':
+                        times[5] = times[2][:-2]
+
+                    entry['depTimes'] = [times[0], times[2]]
+                    entry['retTimes'] = [times[3], times[5]]
+                    entry['price'] = container.find('div', {'class': 'f8F1-price-text'}).text
+                    newPrices[dataID] = entry
+        
+                return newPrices
+
+        except Exception as e:
+            print("An exception occurred: %s" % e)
+
     data = request.get_json()
     urlID = data.get('urlID')
-    res = getData(urlID)
-    return jsonify(res)     
+    res, url = getData(urlID)
+    print(url)
+    newPrices = scrapePrices(res, url)
+    return jsonify({'pricesAndInfo': newPrices, 'dbData': res}), 200   
 
 @app.route('/airlineAPI', methods=['POST'])
 @cross_origin()
@@ -240,11 +308,7 @@ def airlineAPI():
             cursor = conn.cursor(cursor_factory=DictCursor)
             if username:
                 for data_id, price in dataIDs.items():
-                    if "-sponsored" in data_id:
-                        id = data_id.replace('-sponsored', '').strip()
-                    else:
-                        id = data_id
-
+                    id = cleanSponsorString(data_id)
                     cursor.execute('SELECT COUNT(*) FROM flightprices WHERE data_id = %s;', (id,))
                     if cursor.fetchone()[0] == 0:
                         cursor.execute(
