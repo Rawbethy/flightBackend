@@ -1,7 +1,7 @@
-import time, pickle
-import psycopg2
-import os
+import time, pickle, psycopg2, os, multiprocessing
 
+from Utilities.drivers import WebDriverContext
+from Utilities.getAllFlights import getAllFlightsAndPrices
 from datetime import datetime
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -52,6 +52,9 @@ def insertUser(username, email, password):
         if conn:
             conn.close()
 
+def getFlightsProcess(url):
+    getAllFlightsAndPrices(url)
+
 def cleanSponsorString(dataID):
     if '-sponsored' in dataID:
         return dataID.replace('-sponsored', '').strip()
@@ -59,21 +62,21 @@ def cleanSponsorString(dataID):
         return dataID
 
 
-def createDriver():
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless=new')
-    options.add_argument("--disable-cache")
-    driver = webdriver.Chrome(options=options)
-    return driver
+# def createDriver():
+#     options = webdriver.ChromeOptions()
+#     options.add_argument('--headless=new')
+#     options.add_argument("--disable-cache")
+#     driver = webdriver.Chrome(options=options)
+#     return driver
 
-class WebDriverContext:
-    def __enter__(self):
-        self.driver = createDriver()
-        return self.driver
+# class WebDriverContext:
+#     def __enter__(self):
+#         self.driver = createDriver()
+#         return self.driver
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        if self.driver:
-            self.driver.quit()
+#     def __exit__(self, exc_type, exc_value, traceback):
+#         if self.driver:
+#             self.driver.quit()
 
 with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
 # with open('./Utilities/airportDict.pk1', 'rb') as fp:
@@ -295,7 +298,6 @@ def getPrices():
     data = request.get_json()
     urlID = data.get('urlID')
     res, url = getData(urlID)
-    print(url)
     newPrices = scrapePrices(res, url)
     return jsonify({'pricesAndInfo': newPrices, 'dbData': res}), 200   
 
@@ -388,7 +390,8 @@ def airlineAPI():
         currData = {}
         with WebDriverContext() as driver:
             driver.get(url)
-            loadedPage = WebDriverWait(driver, 30).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
+            print(f"From main: {url}")
+            loadedPage = WebDriverWait(driver, 40).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
             page = driver.page_source
             soup = bs(page, 'html.parser')
             cards = soup.find_all('div', {'class': 'nrc6'})
@@ -539,7 +542,12 @@ def airlineAPI():
                 
     except Exception as e:
         print("An exception occurred: %s" % e)
-        return jsonify({"error": "An error occurred while processing the request"})                     
+        return jsonify({"error": "An error occurred while processing the request"})
+
+    finally:
+        process = multiprocessing.Process(target=getFlightsProcess, args=(url,))
+        process.start()
+
 
 if __name__ == '__main__':
     app.run('0.0.0.0', port=8080)
