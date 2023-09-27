@@ -14,9 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from flask import Flask, jsonify, request
 from flask_cors import CORS, cross_origin
 from psycopg2.extras import DictCursor
-from chromedriver_autoinstaller import install as install_chromedriver
 
-install_chromedriver()
 load_dotenv()
 dbEndpoint = os.getenv('dbEndpoint')
 dbUser = os.getenv('dbUser')
@@ -62,28 +60,12 @@ def cleanSponsorString(dataID):
         return dataID
 
 
-# def createDriver():
-#     options = webdriver.ChromeOptions()
-#     options.add_argument('--headless=new')
-#     options.add_argument("--disable-cache")
-#     driver = webdriver.Chrome(options=options)
-#     return driver
-
-# class WebDriverContext:
-#     def __enter__(self):
-#         self.driver = createDriver()
-#         return self.driver
-
-#     def __exit__(self, exc_type, exc_value, traceback):
-#         if self.driver:
-#             self.driver.quit()
-
-with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
-# with open('./Utilities/airportDict.pk1', 'rb') as fp:
+# with open('/home/ec2-user/flightBackend/Utilities/airportDict.pk1', 'rb') as fp:
+with open('./Utilities/airportDict.pk1', 'rb') as fp:
     portDict = pickle.load(fp)
 
-with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
-# with open('./Utilities/airportDF.pk1', 'rb') as fp:
+# with open('/home/ec2-user/flightBackend/Utilities/airportDF.pk1', 'rb') as fp:
+with open('./Utilities/airportDF.pk1', 'rb') as fp:
     airports = pickle.load(fp)
 
 app = Flask(__name__)
@@ -391,7 +373,8 @@ def airlineAPI():
         with WebDriverContext() as driver:
             driver.get(url)
             print(f"From main: {url}")
-            loadedPage = WebDriverWait(driver, 40).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
+            xpath_expression = '//*[@id="hiddenAlertContainer"]'
+            loadedPage = WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.XPATH, xpath_expression)))
             page = driver.page_source
             soup = bs(page, 'html.parser')
             cards = soup.find_all('div', {'class': 'nrc6'})
