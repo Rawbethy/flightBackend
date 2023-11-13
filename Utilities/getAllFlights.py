@@ -12,7 +12,7 @@ def getAllFlightsAndPrices(url):
         currData = {}
         with WebDriverContext() as driver:
             driver.get(url)
-            print(f'From AllFlights: {url}')
+            print(url)
             loadedPage = WebDriverWait(driver, 40).until(EC.text_to_be_present_in_element((By.ID, 'hiddenAlertContainer'), 'Results ready.'))
             for i in range(4):
                 try:
