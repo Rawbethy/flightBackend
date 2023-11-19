@@ -1,4 +1,4 @@
-import time, pickle, os, multiprocessing, pyodbc, socket
+import time, pickle, os, multiprocessing, pyodbc, socket, sys
 
 from Utilities.drivers import WebDriverContext
 from Utilities.getAllFlights import getAllFlightsAndPrices
@@ -34,12 +34,6 @@ def createDBConnection():
 
 def getFlightsProcess(url):
     getAllFlightsAndPrices(url)
-
-def cleanSponsorString(dataID):
-    if '-sponsored' in dataID:
-        return dataID.replace('-sponsored', '').strip()
-    else:
-        return dataID
 
 # with open('/home/ec2-user/flightBackend/Utilities/PickleFiles/airportDict.pk1', 'rb') as fp:
 with open('./Utilities/PickleFiles/airportDict.pk1', 'rb') as fp:
@@ -87,6 +81,7 @@ def login():
 @app.route('/getHistory', methods=['POST'])
 @cross_origin()
 def getHistory():
+    data = request.get_json()
     username = data.get('username')
     conn = createDBConnection()
 
@@ -97,6 +92,7 @@ def getHistory():
 def getPrices():
     data = request.get_json()
     urlID = data.get('urlID')
+    conn = creatDBConnection()
 
     return GetPricesModule(urlID, conn)
 

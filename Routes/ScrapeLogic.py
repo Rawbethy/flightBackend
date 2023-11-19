@@ -1,27 +1,11 @@
+import pyodbc
 from Utilities.drivers import WebDriverContext
-
-def addLinkData(username, depDate, retDate, depCity, arrCity, url, conn):
-    cursor = None
-    try:
-        cursor = conn.cursor(cursor_factory=DictCursor)
-        if username:
-            for data_id, price in dataIDs.items():
-                id = cleanSponsorString(data_id)
-                cursor.execute('SELECT COUNT(*) FROM flightprices WHERE data_id = %s;', (id,))
-                if cursor.fetchone()[0] == 0:
-                    cursor.execute(
-                        'INSERT INTO flightprices (data_id, price, url) VALUES (%s, %s, %s);',
-                        (id, int(price), url)
-                    )
-        conn.commit()
-  
-    except pyodbc.Error as e:
-        print('ERROR: %s', (e)) 
+from Utilities.Queries.addLinkData import addLinkData
 
 def addLinkToUser(username, depDate, retDate, depCity, arrCity, url, conn):
     cursor = None
     try:
-        cursor = conn.cursor(cursor_factory=DictCursor)
+        cursor = conn.cursor()
         cursor.execute(f'SELECT * FROM history WHERE username = \'{username}\' AND url = \'{url}\';')
         if not cursor.fetchone():
             cursor.execute('INSERT INTO history (url, username, timestamp, dep_city, arr_city, dep_date, ret_date) VALUES(%s, %s, %s, %s, %s, %s, %s);', (url, username, datetime.today().date().strftime('%Y-%m-%d'), depCity, arrCity, depDate, retDate))
@@ -59,8 +43,9 @@ def createURL(depPort, arrPort, depDate, retDate, numAd):
     string += f'/{depDate}/{retDate}/{numAd}adults?sort=bestflight_a'
     return string
 
-def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate):
+def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, conn):
     url = createURL(depPort, arrPort, depDate, retDate, 1)
+
     try:
         currData = {}
         with WebDriverContext() as driver:
@@ -75,7 +60,7 @@ def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate):
             
             else:
                 if username:
-                    addLinkToUser(username, depDate, retDate, depCity, arrCity, url)
+                    addLinkToUser(username, depDate, retDate, depCity, arrCity, url, conn)
 
                 airlinesAndPrices = dict()
 
@@ -211,7 +196,7 @@ def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate):
                     currData[entry['resultID']] = int(entry['price'][1:].replace(',', ''))
 
                 if username:
-                    addLinkData(username, currData, url)
+                    addLinkData(username, currData, url, conn)
                 
                 return jsonify(airlinesAndPrices)
                 
