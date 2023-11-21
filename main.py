@@ -1,7 +1,5 @@
 import time, pickle, os, multiprocessing, pyodbc, socket, sys
 
-from Utilities.drivers import WebDriverContext
-from Utilities.getAllFlights import getAllFlightsAndPrices
 from datetime import datetime
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup as bs
@@ -13,6 +11,10 @@ from selenium.webdriver.support import expected_conditions as EC
 from flask import Flask, jsonify, request
 from flask_cors import CORS, cross_origin
 from chromedriver_autoinstaller import install as install_chromedriver
+
+from Utilities.drivers import WebDriverContext
+from Utilities.getAllFlights import getAllFlightsAndPrices
+from Utilities.authGen import tokenRequired
 
 from Routes.Register import RegisterModule
 from Routes.Login import LoginModule
@@ -26,6 +28,8 @@ dbServer = os.getenv('dbServer')
 dbUser = os.getenv('dbUser')
 dbName = os.getenv('dbName')
 dbPW = os.getenv('dbPW')
+
+secretKey = os.getenv('SECRET')
 
 connString = f'Driver={{ODBC Driver 18 for SQL Server}};SERVER={dbServer};DATABASE={dbName};UID={dbUser};PWD={dbPW};Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;'
 
@@ -44,7 +48,7 @@ with open('./Utilities/PickleFiles/airportDF.pk1', 'rb') as fp:
     airports = pickle.load(fp)
     
 app = Flask(__name__)
-cors = CORS(app)
+CORS(app)
 
 @app.route('/')
 @cross_origin()
@@ -76,10 +80,11 @@ def login():
     password = data['password']
     conn = createDBConnection()
 
-    return LoginModule(username, password, conn)
+    return LoginModule(username, password, secretKey, conn)
 
 @app.route('/getHistory', methods=['POST'])
 @cross_origin()
+@tokenRequired
 def getHistory():
     data = request.get_json()
     username = data.get('username')
@@ -89,6 +94,7 @@ def getHistory():
 
 @app.route('/getPrices', methods=['POST'])
 @cross_origin()
+@tokenRequired
 def getPrices():
     data = request.get_json()
     urlID = data.get('urlID')
