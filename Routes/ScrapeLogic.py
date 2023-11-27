@@ -1,22 +1,28 @@
 import pyodbc
+
+from datetime import datetime
+from flask import jsonify
 from Utilities.drivers import WebDriverContext
+from bs4 import BeautifulSoup as bs
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from Utilities.Queries.addLinkData import addLinkData
 
 def addLinkToUser(username, depDate, retDate, depCity, arrCity, url, conn):
     cursor = None
     try:
         cursor = conn.cursor()
-        cursor.execute(f'SELECT * FROM history WHERE username = \'{username}\' AND url = \'{url}\';')
+        cursor.execute('SELECT * FROM history WHERE username = ? AND url = ?;', (username, url))
         if not cursor.fetchone():
-            cursor.execute('INSERT INTO history (url, username, timestamp, dep_city, arr_city, dep_date, ret_date) VALUES(%s, %s, %s, %s, %s, %s, %s);', (url, username, datetime.today().date().strftime('%Y-%m-%d'), depCity, arrCity, depDate, retDate))
-            conn.commit()
+            cursor.execute('INSERT INTO history (url, username, timestamp, depCity, arrCity, depDate, retDate) VALUES(?, ?, ?, ?, ?, ?, ?);', (url, username, datetime.today().date().strftime('%Y-%m-%d'), depCity, arrCity, depDate, retDate))
             print('Link inserted successfully!')
             return
         print('User already has link present in DB')
         return
 
     except pyodbc.Error as e:
-        print('ERROR: %s', (e,))
+        print(f'Error inserting link to user profile:\n{e}')
         return
 
 def createURL(depPort, arrPort, depDate, retDate, numAd):
@@ -198,7 +204,7 @@ def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, co
                 if username:
                     addLinkData(username, currData, url, conn)
                 
-                return jsonify(airlinesAndPrices)
+                return airlinesAndPrices
                 
     except Exception as e:
         print("An exception occurred: %s" % e)

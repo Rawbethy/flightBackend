@@ -1,13 +1,8 @@
 import time, pickle, os, multiprocessing, pyodbc, socket, sys
 
-from datetime import datetime
 from dotenv import load_dotenv
-from bs4 import BeautifulSoup as bs
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from flask import Flask, jsonify, request
 from flask_cors import CORS, cross_origin
 from chromedriver_autoinstaller import install as install_chromedriver
@@ -116,10 +111,12 @@ def airlineAPI():
 
     try:
         conn = createDBConnection()
-        return ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, conn)
+        res = ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, conn)
+        print(res)
+        return jsonify(res)
 
     except Exception as e:
-        print(f'Exception has occured: {e}')
+        print(f'Exception has occured from main script airline API call: \n{e}')
 
 if __name__ == '__main__':
     app.run('0.0.0.0', port=8080)
