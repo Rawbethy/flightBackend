@@ -10,20 +10,22 @@ from selenium.webdriver.support import expected_conditions as EC
 from Utilities.Queries.addLinkData import addLinkData
 
 def addLinkToUser(username, depDate, retDate, depCity, arrCity, url, conn):
-    cursor = None
     try:
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM history WHERE username = ? AND url = ?;', (username, url))
-        if not cursor.fetchone():
+        res = cursor.execute('SELECT * FROM history WHERE username = ? AND url = ?;', (username, url))
+        if not res.fetchone():
             cursor.execute('INSERT INTO history (url, username, timestamp, depCity, arrCity, depDate, retDate) VALUES(?, ?, ?, ?, ?, ?, ?);', (url, username, datetime.today().date().strftime('%Y-%m-%d'), depCity, arrCity, depDate, retDate))
-            print('Link inserted successfully!')
+            conn.commit()
             return
-        print('User already has link present in DB')
         return
 
     except pyodbc.Error as e:
         print(f'Error inserting link to user profile:\n{e}')
         return
+
+    finally:
+        if cursor:
+            cursor.close()
 
 def createURL(depPort, arrPort, depDate, retDate, numAd):
     string = 'https://www.kayak.com/flights/'
@@ -203,11 +205,11 @@ def ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, co
 
                 if username:
                     addLinkData(username, currData, url, conn)
-                
+                    
                 return airlinesAndPrices
                 
     except Exception as e:
-        print("An exception occurred: %s" % e)
+        print(f'An exception has occured in scrape logic app: \n{e}')
         return jsonify({"error": "An error occurred while processing the request"})
 
     finally:

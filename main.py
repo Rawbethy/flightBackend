@@ -112,7 +112,6 @@ def airlineAPI():
     try:
         conn = createDBConnection()
         res = ScrapeAPI(username, depDate, depCity, depPort, arrPort, arrCity, retDate, conn)
-        print(res)
         return jsonify(res)
 
     except Exception as e:
